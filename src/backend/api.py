@@ -1,4 +1,5 @@
 import os
+import json
 import requests
 import pandas as pd
 
@@ -111,16 +112,19 @@ class API:
         Returns:
             pd.DataFrame: DataFrame contendo os dados retornados pela API.
         """
-        if not content.sucess:
+        if not content.success:
             raise ValueError(f'Não foi possível obter dados da API {content.error}.')
         
         if not content.data:
             raise ValueError('O resultado da API não contém dados para conversão.')
         
         try:
-            df = pd.DataFrame(content.data)
-            return df
+            with open(f'raw_data.json', 'w', encoding='utf-8') as file:
+                json.dump(content.data, file, ensure_ascii=False, indent=2)
+
+            return print(f'Arquivo escrito e salvo localmente com sucesso.')
+        
         except Exception as e:
             raise ValueError(
-                f'Erro ao transformar conteúdo JSON em DataFrame: {str(e)}'
+                f'Erro ao transformar conteúdo JSON em um arquivo: {str(e)}'
             ) from e
