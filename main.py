@@ -5,8 +5,7 @@ from src.backend.api import API
 
 def main():
     api = API()
-    content = api.get_data()
-    df = api.fetch_data(content)
+    df = api.fetch_data()
     return print(df)
 
 if __name__ == '__main__':
