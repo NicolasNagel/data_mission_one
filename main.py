@@ -1,3 +1,6 @@
+import requests
+import pandas as pd
+
 from src.backend.api import API
 
 def main():
