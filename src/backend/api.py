@@ -3,7 +3,6 @@ import json
 import requests
 import pandas as pd
 
-from typing import Dict, Any
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -40,7 +39,7 @@ class API:
     def __init__(self) -> None:
         self.url = os.getenv('API_URL')
         self.api_key = os.getenv('API_KEY')
-        self.params = 'format=json'
+        self.params = {'format': 'json'}
         self.headers = {
             'Authorization': f'Bearer {self.api_key}'
         }
