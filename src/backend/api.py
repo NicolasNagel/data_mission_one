@@ -79,6 +79,8 @@ class API:
                 timeout=30
             )
             response.raise_for_status()
+            print(f'Requisição para {self.url} retornou status {response.status_code}')
+
             content = response.json()
 
             with open('raw_data.json', 'w', encoding='utf-8') as file:
