@@ -1,26 +1,17 @@
-from src.backend.api import API, app, process_inventory
+import logging
 
+from src.backend.data import API
 
-def main() -> None:
-    """
-    Executa o pipeline completo:
-    1. Busca dados da API externa.
-    2. Salva o arquivo raw_data.json.
-    3. Processa o inventário.
-    4. Imprime as métricas calculadas.
-    """
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s | %(name)s | %(levelname)s | %(message)s'
+)
+
+def pipeline():
     api = API()
+    content = api.get_data()
+    df = api.transform_data(content)
+    api.save_data(df)
 
-    df = api.fetch_data()
-
-    print("Primeiros 5 registros do DataFrame bruto:")
-    print(df.head())
-
-    metrics = process_inventory("raw_data.json")
-
-    print("Métricas calculadas do inventário:")
-    print(metrics)
-
-
-if __name__ == "__main__":
-    main()
+if __name__ == '__main__':
+    pipeline()

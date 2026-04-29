@@ -1,69 +1,48 @@
 import os
-import json
-import requests
 import pandas as pd
+import requests
+import logging
 
+from datetime import datetime
+from typing import Optional
 from dotenv import load_dotenv
 
+from src.database.db import DataBase
+from src.utils.control_classes import APIResult
+
+logger = logging.getLogger(__name__)
+
 load_dotenv()
+
 
 class API:
     """
     Cliente responsável por consultar a API da DataMission, salvar a resposta bruta
     em disco e retornar os dados em formato tabular.
-
-    A classe centraliza a configuração da requisição HTTP, incluindo URL, chave de API,
-    parâmetros de consulta e cabeçalhos de autenticação. As configurações são carregadas
-    a partir das variáveis de ambiente `API_URL` e `API_KEY`.
-
-    O método `fetch_data` executa a chamada HTTP, valida a resposta, converte o conteúdo
-    retornado para JSON, salva os dados no arquivo `raw_data.json` e retorna um
-    `pd.DataFrame` para uso nas próximas etapas da ETL.
-
-    Attributes:
-        url (str | None): URL da API carregada da variável de ambiente `API_URL`.
-        api_key (str | None): Chave de autenticação carregada da variável de ambiente `API_KEY`.
-        params (str): Parâmetros enviados na requisição à API.
-        headers (dict): Cabeçalhos HTTP utilizados na requisição, incluindo autenticação.
-
-    Methods:
-        fetch_data:
-            Executa a requisição à API, salva a resposta JSON em disco e retorna
-            os dados como um `pd.DataFrame`.
-
-    Raises:
-        ValueError: Quando `API_URL` ou `API_KEY` não estão configuradas.
-        RuntimeError: Quando ocorre erro HTTP, erro de comunicação ou falha ao
-            interpretar a resposta como JSON.
     """
-    def __init__(self) -> None:
-        self.url = os.getenv('API_URL')
-        self.api_key = os.getenv('API_KEY')
-        self.params = {'format': 'json'}
+
+    def __init__(self, db: Optional[DataBase] = None) -> None:
+        self.db = db or DataBase()
+
+        self.url = os.getenv("API_URL")
+        self.api_key = os.getenv("API_KEY")
+        self.params = {"format": "json"}
+        self.timeout = 30
         self.headers = {
-            'Authorization': f'Bearer {self.api_key}'
+            "Authorization": f"Bearer {self.api_key}"
         }
-    
-    def fetch_data(self) -> pd.DataFrame:
+
+    def get_data(self) -> APIResult:
         """
-        Executa a chamada à API da DataMission, salva a resposta JSON e retorna os dados.
-
-        A função realiza uma requisição GET usando a URL, os headers e os parâmetros
-        configurados na instância. Em caso de sucesso, a resposta é convertida para JSON,
-        salva no arquivo `raw_data.json` e transformada em um `pd.DataFrame`.
-
-        Quando o JSON retornado possui uma chave `data`, essa chave é usada como origem
-        dos registros. Caso contrário, o conteúdo completo da resposta é usado para criar
-        o DataFrame.
+        Executa a chamada à API, salva a resposta JSON
 
         Raises:
-            ValueError: Quando as variáveis de ambiente `API_URL` ou `API_KEY`
-                não estão configuradas.
-            RuntimeError: Quando ocorre erro HTTP, falha de comunicação com a API
-                ou quando a resposta não contém um JSON válido.
+            ValueError: Quando `API_URL` ou `API_KEY` não estão configuradas.
+            RuntimeError: Quando ocorre erro HTTP, erro de comunicação ou erro
+                ao interpretar a resposta como JSON.
 
         Returns:
-            pd.DataFrame: DataFrame contendo os dados retornados pela API.
+            APIResult: Conteúdo JSON para tratamento posterior
         """
         if not self.url:
             raise ValueError("A variável de ambiente API_URL não está configurada.")
@@ -76,35 +55,91 @@ class API:
                 url=self.url,
                 headers=self.headers,
                 params=self.params,
-                timeout=30
+                timeout=self.timeout
             )
             response.raise_for_status()
-            print(f'Requisição para {self.url} retornou status {response.status_code}')
+            logger.info(f'Status retorando pela API: {response.status_code}')
 
-            content = response.json()
-
-            with open('raw_data.json', 'w', encoding='utf-8') as file:
-                json.dump(content, file, ensure_ascii=False, indent=2)
-
-            print('Arquivo raw_data.json salvo com sucesso.')
-
-            data = content.get("data", content) if isinstance(content, dict) else content
-            
-            return pd.DataFrame(data)
+            return APIResult(
+                success=True,
+                data=response.json(),
+                status_code=response.status_code
+            )
         
-        except requests.HTTPError as exc:
-            status_code = exc.response.status_code if exc.response else None
-            raise RuntimeError(
-                f"Erro HTTP ao buscar dados da API. "
-                f"Status code: {status_code}. Erro original: {exc}"
-            ) from exc
+        except requests.HTTPError as e:
+            status_code = e.response.status_code if e.response else None
 
-        except requests.RequestException as exc:
-            raise RuntimeError(
-                f"Erro de comunicação ao buscar dados da API: {exc}"
-            ) from exc
+            return APIResult(
+                success=False,
+                error=f'Erro HTTP ao buscar dados da API: {str(e)}',
+                status_code=status_code
+            )
+        
+        except requests.RequestException as e:
+            return APIResult(
+                success=False,
+                error=f'Erro de comunicação ao buscar dados da API: {str(e)}'
+            )
+        
+        except ValueError as e:
+            return APIResult(
+                success=False,
+                error=f'Resposta da API não contém um JSON válido: {str(e)}'
+            )
+        
+    def transform_data(self, content: APIResult) -> pd.DataFrame:
+        """Transforma o arquivo JSON em uma DataFrame do Pandas.
+        
+        Args:
+            content (APIResult): Conteúdo JSON da API.
 
-        except ValueError as exc:
-            raise RuntimeError(
-                f"Resposta da API não contém um JSON válido: {exc}"
-            ) from exc
+        Returns:
+            pd.DataFrame: DataFrame para visão tabular dos dados.
+        """
+        logger.info('Iniciando Transformação de Dados...')
+
+        if not content.success:
+            raise ValueError(f'Erro na consulta API. Transformação cancelada: {content.error}')
+        
+
+        if content.status_code != 200:
+            raise ValueError(f'Status Code inválido: {content.status_code}. Transformação cancelada.')
+        
+        if not content.data:
+            raise ValueError('Nenhum dado retornado na API. Transformação cancelada.')
+        
+        try:
+            df = pd.DataFrame(content.data)
+
+            df['sistem_source'] = 'api_data_mission'
+            df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
+            df['inserted_at'] = datetime.now()
+
+            logger.info(f'Transformação concluída {len(df)} registro(s) transformado(s)')
+
+            return df
+        except Exception as e:
+            logger.error(f'Erro ao transformar Dados: {str(e)}')
+            raise ValueError(f'Não foi possível transformar o DataFrame')
+        
+    def normalize_names(self, data: pd.DataFrame) -> pd.DataFrame:
+        """Padroniza os nomes dos arquivos para inserção no Banco de Dados.
+        
+        Args:
+            data (pd.DataFrame): DataFrame para visão tabular dos dados.
+
+        Returns:
+            pd.DataFrame: DataFrame para visão tabular dos dados com o nome padronizado.
+        """
+        if data.empty:
+            raise ValueError('DataFrame vazio. Normalização cancelada')
+
+        prefix = 'bronze_api_'
+
+    def save_data(self, data: pd.DataFrame) -> None:
+        try:
+            self.db.insert_data(data)
+            logger.info('Dados salvos com sucesso.')
+        except Exception as e:
+            logger.error(f'Erro ao salvar os dados: {str(e)}')
+            raise
